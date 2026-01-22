@@ -74,6 +74,15 @@ const CharacterSheet: React.FC<CharacterSheetProps> = ({ character, fatePoints, 
     });
   };
 
+  const handleClearInventory = () => {
+    if (window.confirm("Are you sure you want to remove all items?")) {
+      onUpdate({
+        ...character,
+        inventory: []
+      });
+    }
+  };
+
   const handleToggleEquip = (id: string) => {
     onUpdate({
       ...character,
@@ -98,7 +107,7 @@ const CharacterSheet: React.FC<CharacterSheetProps> = ({ character, fatePoints, 
         <div className="flex justify-between items-start mb-2">
           <div>
             <h2 className="text-2xl font-bold text-gray-900 fate-font">{character.name}</h2>
-            <p className="text-sm text-gray-500 italic">{character.pronouns}</p>
+            <p className="text-sm text-gray-500 italic">{character.sex}</p>
           </div>
           <div className="flex flex-col items-center bg-yellow-50 px-3 py-1 rounded-full border border-yellow-200">
             <span className="text-xs font-bold text-yellow-700 uppercase tracking-wider">Fate Points</span>
@@ -259,9 +268,20 @@ const CharacterSheet: React.FC<CharacterSheetProps> = ({ character, fatePoints, 
 
         {/* Inventory */}
         <section>
-          <h3 className="flex items-center gap-2 text-sm font-bold text-gray-500 uppercase border-b border-gray-200 pb-1 mb-3">
-            <Package size={16} /> Inventory
-          </h3>
+          <div className="flex items-center justify-between border-b border-gray-200 pb-1 mb-3">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-gray-500 uppercase">
+              <Package size={16} /> Inventory
+            </h3>
+            {character.inventory.length > 0 && (
+              <button 
+                onClick={handleClearInventory}
+                className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1 hover:bg-red-50 px-2 py-0.5 rounded transition-colors"
+                title="Remove all items"
+              >
+                <Trash2 size={12} /> Clear All
+              </button>
+            )}
+          </div>
           
           <div className="space-y-2 mb-4">
             {character.inventory.length === 0 && (
@@ -296,7 +316,7 @@ const CharacterSheet: React.FC<CharacterSheetProps> = ({ character, fatePoints, 
                 </div>
                 <button 
                   onClick={() => handleRemoveItem(item.id)}
-                  className="text-gray-400 hover:text-red-500 p-1 rounded"
+                  className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded transition-colors"
                   title="Remove Item"
                 >
                   <Trash2 size={14} />

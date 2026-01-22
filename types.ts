@@ -24,6 +24,8 @@ export const SKILL_LIST = Object.values(SkillName);
 
 export type FateAction = 'Overcome' | 'Create Advantage' | 'Attack' | 'Defend';
 
+export type GamePhase = 'Narrative' | 'Challenge' | 'Contest' | 'Conflict';
+
 export type ItemType = 'weapon' | 'armor' | 'gear' | 'consumable';
 
 export interface Item {
@@ -38,7 +40,7 @@ export interface Item {
 
 export interface Character {
   name: string;
-  pronouns: string;
+  sex: string;
   highConcept: string;
   trouble: string;
   relationship: string;
@@ -58,6 +60,25 @@ export interface Character {
   inventory: Item[];
 }
 
+export interface NPC {
+  id: string;
+  name: string;
+  description: string; // High concept equivalent
+  aspects: string[];
+  skills: { [key: string]: number };
+  physicalStress: boolean[];
+  mentalStress: boolean[];
+  consequences: string[];
+}
+
+export interface SceneAspect {
+  id: string;
+  name: string;
+  type: 'Situation' | 'Boost';
+  description?: string;
+  freeInvokes: number;
+}
+
 export type DiceFace = -1 | 0 | 1;
 
 export interface RollResult {
@@ -65,11 +86,20 @@ export interface RollResult {
   total: number;
 }
 
+export interface PendingInteraction {
+  type: 'Action' | 'Defense';
+  actionType: FateAction; // The mechanics determined by GM (e.g., Attack, Overcome)
+  allowedSkills: SkillName[]; // GM suggested skills
+  difficulty: number;
+  difficultyLabel: string;
+  description: string; // "Goblin attacks you" or "Climb the wall"
+}
+
 export interface ChatMessage {
   id: string;
   sender: 'player' | 'gm' | 'system';
   text: string;
-  type?: 'narrative' | 'combat_log';
+  type?: 'narrative' | 'meta';
   roll?: {
     skill: string;
     bonus: number;
@@ -77,6 +107,7 @@ export interface ChatMessage {
     result: number;
     total: number; // result + bonus
     action?: FateAction;
+    vs?: number; // The target number
   };
 }
 

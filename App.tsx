@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Character, ChatMessage, RollResult, ADJECTIVE_LADDER, FateAction } from './types';
+import { Character, ChatMessage, RollResult, ADJECTIVE_LADDER, FateAction, GamePhase, PendingInteraction, NPC, SceneAspect } from './types';
 import CharacterCreator from './components/CharacterCreator';
 import CharacterSheet from './components/CharacterSheet';
 import DiceRoller from './components/DiceRoller';
+import NPCSheet from './components/NPCSheet';
+import SceneAspects from './components/SceneAspects';
 import { initializeAI, startNewGame, sendPlayerMessage } from './services/geminiService';
-import { BookOpen, RotateCcw } from 'lucide-react';
+import { BookOpen, RotateCcw, Flag, Map, Users } from 'lucide-react';
 
 const App: React.FC = () => {
   const [character, setCharacter] = useState<Character | null>(null);
@@ -13,23 +15,26 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [setting, setSetting] = useState('A noir detective story in 1920s Chicago mixed with Eldritch Horror');
   
+  // Game State
+  const [phase, setPhase] = useState<GamePhase>('Narrative');
+  const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | null>(null);
+  const [npcs, setNpcs] = useState<NPC[]>([]);
+  const [sceneAspects, setSceneAspects] = useState<SceneAspect[]>([]);
+  const [showRightSidebar, setShowRightSidebar] = useState(true);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (process.env.API_KEY) {
       initializeAI(process.env.API_KEY);
     } else {
-        console.warn("API Key missing. AI features will fail.");
+        console.warn("API Key missing.");
         initializeAI("MISSING_KEY"); 
     }
   }, []);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const handleCharacterComplete = async (newChar: Character) => {
@@ -37,11 +42,13 @@ const App: React.FC = () => {
     setFatePoints(newChar.refresh);
     setIsLoading(true);
     
-    const introText = await startNewGame(newChar, setting);
-    
-    setMessages([
-      { id: '1', sender: 'gm', text: introText }
-    ]);
+    // Initial Start
+    const response = await startNewGame(newChar, setting);
+    // Parse initial response (usually narrative only)
+    const metaRegex = /\[META\]([\s\S]*?)\[\/META\]/;
+    const cleanText = response.replace(metaRegex, '').trim();
+
+    setMessages([{ id: '1', sender: 'gm', text: cleanText }]);
     setIsLoading(false);
   };
 
@@ -49,45 +56,122 @@ const App: React.FC = () => {
     setCharacter(updatedChar);
   };
 
-  // Pure Roleplay / Chat Action
-  const handleChatAction = async (message: string) => {
-    if (!message.trim() || isLoading) return;
+  const handleEndScene = () => {
+    if (!character) return;
+    
+    // Clear Stress for PC
+    const newChar = { ...character };
+    newChar.physicalStress = newChar.physicalStress.map(() => false);
+    newChar.mentalStress = newChar.mentalStress.map(() => false);
+    setCharacter(newChar);
 
+    // Clear NPCs Stress
+    const updatedNPCs = npcs.map(npc => ({
+        ...npc,
+        physicalStress: npc.physicalStress.map(() => false),
+        mentalStress: npc.mentalStress.map(() => false)
+    }));
+    setNpcs(updatedNPCs);
+
+    // Clear Scene Aspects (Boosts/Situation Aspects expire at scene end typically)
+    setSceneAspects([]);
+
+    // Notify AI
+    const sysMsg: ChatMessage = {
+        id: Date.now().toString(),
+        sender: 'system',
+        text: "--- SCENE END ---\nStress tracks cleared. Scene Aspects cleared."
+    };
+    setMessages(prev => [...prev, sysMsg]);
+    
+    handleInput("The scene ends. We move to the next scene...", "PLAYER_TRIGGERED_SCENE_END");
+  };
+
+  const handleConcede = () => {
+      handleInput("I Concede the conflict.", "PLAYER_CONCEDES");
+      // Add Fate Points per concession rules (simplified: +1 + consequences)
+      setFatePoints(prev => prev + 1); 
+  };
+
+  const handleNPCUpdate = (updatedNPC: NPC) => {
+      setNpcs(prev => prev.map(n => n.id === updatedNPC.id ? updatedNPC : n));
+  };
+
+  const handleNPCRemove = (id: string) => {
+      setNpcs(prev => prev.filter(n => n.id !== id));
+  };
+  
+  const handleAspectAdd = (aspect: SceneAspect) => {
+      setSceneAspects(prev => [...prev, aspect]);
+  };
+
+  const handleAspectRemove = (id: string) => {
+      setSceneAspects(prev => prev.filter(a => a.id !== id));
+  };
+
+  // Main Loop Entry Point
+  const handleInput = async (inputText: string, systemContext?: string) => {
+    if (!inputText.trim() || isLoading) return;
+
+    // 1. Add Player Message
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       sender: 'player',
-      text: message
+      text: inputText
     };
-
     setMessages(prev => [...prev, userMsg]);
     setIsLoading(true);
+    setPendingInteraction(null); // Clear any pending interaction while thinking
 
-    const aiResponse = await sendPlayerMessage(userMsg.text);
-    
+    // 2. Send to AI (Include Current NPC & Aspect State)
+    const response = await sendPlayerMessage(inputText, systemContext, npcs, sceneAspects);
+
+    // 3. Process AI Response
     setMessages(prev => [...prev, {
       id: (Date.now() + 1).toString(),
       sender: 'gm',
-      text: aiResponse
+      text: response.text
     }]);
+
+    // 4. Update Game State based on META
+    if (response.meta) {
+        setPhase(response.meta.phase || 'Narrative');
+        
+        // Handle Interaction
+        if (response.meta.interaction && response.meta.interaction.type) {
+            const i = response.meta.interaction;
+            setPendingInteraction({
+                type: i.type,
+                actionType: i.actionType,
+                allowedSkills: i.allowedSkills || [],
+                difficulty: i.difficulty || 0,
+                difficultyLabel: ADJECTIVE_LADDER[i.difficulty as keyof typeof ADJECTIVE_LADDER] || `+${i.difficulty}`,
+                description: i.reason || "Make a roll"
+            });
+        }
+
+        // Handle Scene Data (NPCs & Aspects)
+        if (response.meta.sceneData) {
+            if (response.meta.sceneData.npcs) {
+                setNpcs(response.meta.sceneData.npcs);
+            }
+            if (response.meta.sceneData.aspects) {
+                setSceneAspects(response.meta.sceneData.aspects);
+            }
+        }
+    }
+    
     setIsLoading(false);
   };
 
-  // Mechanics + Narrative Action
+  // Mechanics Resolution
   const handleRollAction = async (roll: RollResult, skillName: string, skillValue: number, action: FateAction, narrative: string) => {
     const total = roll.total + skillValue;
     const ladderResult = ADJECTIVE_LADDER[total as keyof typeof ADJECTIVE_LADDER] || `+${total}`;
     
-    // 1. Add Player Narrative first
-    const playerMsg: ChatMessage = {
-      id: Date.now().toString(),
-      sender: 'player',
-      text: narrative
-    };
-    setMessages(prev => [...prev, playerMsg]);
-
-    // 2. Add System Roll Result
+    // Display System Roll
     const rollMsg: ChatMessage = {
-      id: (Date.now() + 1).toString(),
+      id: Date.now().toString(),
       sender: 'system',
       text: `[${action}] Rolled ${skillName} (${skillValue > 0 ? '+' : ''}${skillValue}). Result: ${ladderResult} (${total})`,
       roll: {
@@ -100,40 +184,24 @@ const App: React.FC = () => {
       }
     };
     setMessages(prev => [...prev, rollMsg]);
-    
-    // 3. Construct Context with Current Status (Stress/Consequences)
-    const activeConsequences = [
-        character?.consequences.mild && `Mild: ${character.consequences.mild}`,
-        character?.consequences.moderate && `Moderate: ${character.consequences.moderate}`,
-        character?.consequences.severe && `Severe: ${character.consequences.severe}`
-    ].filter(Boolean).join(', ');
 
-    const statusContext = `
-      PLAYER STATUS:
-      Physical Stress: [${character?.physicalStress.map(s => s ? 'X' : 'O').join('')}]
-      Mental Stress: [${character?.mentalStress.map(s => s ? 'X' : 'O').join('')}]
-      Consequences: ${activeConsequences || 'None'}
-    `;
-
-    const systemPrompt = `
-      ACTION: ${action}
-      SKILL: ${skillName}
-      ROLL TOTAL: ${total} (${ladderResult})
-      ${statusContext}
+    // Build Context for AI
+    const context = `
+      PLAYER ROLL RESOLUTION:
+      Action: ${action}
+      Skill: ${skillName}
+      Total: ${total}
       
-      Interpret this result based on the player's narrative description and their current status/injuries.
+      Previous Context: ${pendingInteraction?.description}
+      Target Difficulty: ${pendingInteraction?.difficulty}
+      
+      Narrate the outcome of this roll based on Success, Tie, or Failure.
+      If Create Advantage was successful, ensure you add the Situation Aspect or Boost to 'sceneData'.
+      If this was a Conflict action, proceed to the GM Turn (Enemy Actions).
     `;
 
-    // 4. Send to AI
-    setIsLoading(true);
-    const aiResponse = await sendPlayerMessage(narrative, systemPrompt);
-    
-    setMessages(prev => [...prev, {
-        id: (Date.now() + 2).toString(),
-        sender: 'gm',
-        text: aiResponse
-    }]);
-    setIsLoading(false);
+    // Feed back into loop
+    handleInput(narrative || "(Rolling dice)", context);
   };
 
   const adjustFatePoints = (delta: number) => {
@@ -164,7 +232,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-fate-dark flex overflow-hidden">
       {/* Sidebar - Character Sheet */}
-      <div className="w-96 p-4 hidden lg:block h-screen">
+      <div className="w-80 2xl:w-96 p-4 hidden lg:block h-screen flex-shrink-0">
         <CharacterSheet 
             character={character} 
             fatePoints={fatePoints} 
@@ -176,11 +244,24 @@ const App: React.FC = () => {
       <div className="flex-1 flex flex-col h-screen bg-fate-paper relative">
         {/* Header */}
         <header className="bg-white border-b border-gray-200 p-4 shadow-sm flex justify-between items-center z-10">
-          <h1 className="text-xl font-bold text-gray-800 fate-font flex items-center gap-2">
-            <BookOpen className="text-blue-600" /> 
-            Fate Weaver: {character.name}
-          </h1>
           <div className="flex items-center gap-4">
+             <h1 className="text-xl font-bold text-gray-800 fate-font flex items-center gap-2">
+                <BookOpen className="text-blue-600" /> 
+                {character.name}
+             </h1>
+             <div className="px-3 py-1 bg-gray-100 rounded text-xs font-bold uppercase tracking-wider text-gray-500 flex items-center gap-2">
+                <Map size={14} /> Phase: {phase}
+             </div>
+          </div>
+          
+          <div className="flex items-center gap-4">
+             <button 
+                onClick={handleEndScene}
+                className="text-xs font-bold text-gray-500 hover:text-blue-600 flex items-center gap-1 px-3 py-1 border rounded hover:bg-gray-50 transition-colors"
+                title="Clears all Stress & Scene Aspects"
+             >
+                End Scene
+             </button>
              <div className="flex items-center bg-gray-100 rounded-lg p-1">
                 <button onClick={() => adjustFatePoints(-1)} className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-200 rounded">-</button>
                 <div className="px-3 font-bold text-yellow-600 flex items-center gap-1">
@@ -189,6 +270,12 @@ const App: React.FC = () => {
                 </div>
                 <button onClick={() => adjustFatePoints(1)} className="w-8 h-8 flex items-center justify-center text-gray-600 hover:bg-gray-200 rounded">+</button>
              </div>
+             <button 
+               onClick={() => setShowRightSidebar(!showRightSidebar)}
+               className="lg:hidden p-2 rounded bg-gray-100 text-gray-600"
+             >
+                <Users size={18} />
+             </button>
           </div>
         </header>
 
@@ -239,18 +326,54 @@ const App: React.FC = () => {
             </div>
 
             {/* Narrative Action Area */}
-            <div className="bg-gray-50 border-t border-gray-200 p-4">
+            <div className={`border-t p-4 transition-colors ${pendingInteraction ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
                 <div className="max-w-4xl mx-auto space-y-4">
                     <DiceRoller 
                         character={character} 
-                        onRollAction={handleRollAction}
-                        onChatAction={handleChatAction}
                         isLoading={isLoading}
+                        pendingInteraction={pendingInteraction}
+                        phase={phase}
+                        onRollAction={handleRollAction}
+                        onChatAction={(text) => handleInput(text)}
+                        onConcede={handleConcede}
                     />
                 </div>
             </div>
         </div>
       </div>
+
+      {/* Right Sidebar - NPCs & Scene */}
+      {showRightSidebar && (
+        <div className="w-72 2xl:w-80 bg-gray-100 border-l border-gray-200 p-4 overflow-y-auto hidden lg:block flex-shrink-0">
+            {/* Scene Aspects & Boosts */}
+            <SceneAspects 
+                aspects={sceneAspects} 
+                onAdd={handleAspectAdd} 
+                onRemove={handleAspectRemove}
+            />
+
+            <hr className="border-gray-300 my-4" />
+
+            <h2 className="text-sm font-bold text-gray-500 uppercase mb-4 flex items-center gap-2">
+                <Users size={16} /> Scene / NPCs
+            </h2>
+            
+            {npcs.length === 0 ? (
+                <div className="text-center text-gray-400 text-sm italic py-4">
+                    No active NPCs in scene.
+                </div>
+            ) : (
+                npcs.map(npc => (
+                    <NPCSheet 
+                        key={npc.id} 
+                        npc={npc} 
+                        onUpdate={handleNPCUpdate} 
+                        onRemove={handleNPCRemove}
+                    />
+                ))
+            )}
+        </div>
+      )}
     </div>
   );
 };

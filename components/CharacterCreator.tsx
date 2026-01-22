@@ -12,7 +12,7 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onComplete }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [formData, setFormData] = useState<Partial<Character>>({
     name: '',
-    pronouns: '',
+    sex: 'Man',
     highConcept: '',
     trouble: '',
     relationship: '',
@@ -82,7 +82,7 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onComplete }) => {
 
     const char: Character = {
       name: formData.name || 'Unnamed Hero',
-      pronouns: formData.pronouns || 'they/them',
+      sex: formData.sex || 'Man',
       highConcept: formData.highConcept || 'Unknown',
       trouble: formData.trouble || 'Unknown',
       relationship: formData.relationship || 'None',
@@ -116,14 +116,15 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onComplete }) => {
         />
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700">Pronouns</label>
-        <input
-          type="text"
-          className="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-          value={formData.pronouns}
-          onChange={e => setFormData({ ...formData, pronouns: e.target.value })}
-          placeholder="e.g. She/Her"
-        />
+        <label className="block text-sm font-medium text-gray-700">Sex</label>
+        <select
+          className="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-white"
+          value={formData.sex}
+          onChange={e => setFormData({ ...formData, sex: e.target.value })}
+        >
+          <option value="Man">Man</option>
+          <option value="Woman">Woman</option>
+        </select>
       </div>
     </div>
   );
